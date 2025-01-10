@@ -6,8 +6,8 @@ use fn_error_context::context;
 use openat_ext::OpenatDirExt;
 
 /// The subdirectory of /boot we use
-const GRUB2DIR: &str = "grub2";
-const CONFIGDIR: &str = "/usr/lib/bootupd/grub2-static";
+const GRUB2DIR: &str = "grub";
+const CONFIGDIR: &str = "/usr/lib/bootupd/grub-static";
 const DROPINDIR: &str = "configs.d";
 
 /// Install the static GRUB config files.
@@ -117,12 +117,12 @@ mod tests {
         let td = tempfile::tempdir()?;
         let tdp = td.path();
         let td = openat::Dir::open(tdp)?;
-        std::fs::create_dir_all(tdp.join("boot/grub2"))?;
+        std::fs::create_dir_all(tdp.join("boot/grub"))?;
         std::fs::create_dir_all(tdp.join("boot/efi/EFI/BOOT"))?;
         std::fs::create_dir_all(tdp.join("boot/efi/EFI/fedora"))?;
         install(&td, Some("fedora"), false).unwrap();
 
-        assert!(td.exists("boot/grub2/grub.cfg")?);
+        assert!(td.exists("boot/grub/grub.cfg")?);
         assert!(td.exists("boot/efi/EFI/fedora/grub.cfg")?);
         Ok(())
     }

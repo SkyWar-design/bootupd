@@ -363,7 +363,7 @@ impl Component for Efi {
         let dest_efidir = component_updatedir(sysroot_path, self);
 
         if ostreebootdir.exists() {
-            let cruft = ["loader", "grub2"];
+            let cruft = ["loader", "grub"];
             for p in cruft.iter() {
                 let p = ostreebootdir.join(p);
                 if p.exists() {

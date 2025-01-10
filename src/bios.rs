@@ -1,17 +1,18 @@
 use std::io::prelude::*;
 use std::path::Path;
 use std::process::Command;
+use std::fs;
 
 use crate::component::*;
 use crate::model::*;
 use crate::packagesystem;
 use anyhow::{bail, Result};
-
 use crate::util;
 use serde::{Deserialize, Serialize};
 
 // grub2-install file path
-pub(crate) const GRUB_BIN: &str = "usr/sbin/grub2-install";
+pub(crate) const GRUB_BIN: &str = "usr/sbin/grub-install";
+pub(crate) const BOOTUPD_EFI: &str = "usr/lib/bootupd/x86_64-efi";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct BlockDevice {
@@ -82,7 +83,7 @@ impl Bios {
     // Run grub2-install
     fn run_grub_install(&self, dest_root: &str, device: &str) -> Result<()> {
         if !self.check_grub_modules()? {
-            bail!("Failed to find grub2-modules");
+            bail!("Failed to find grub-modules");
         }
         let grub_install = Path::new("/").join(GRUB_BIN);
         if !grub_install.exists() {
@@ -111,6 +112,23 @@ impl Bios {
             std::io::stderr().write_all(&cmdout.stderr)?;
             bail!("Failed to run {:?}", cmd);
         }
+
+        // Копирование содержимого BOOTUPD_EFI в boot_dir/x86_64-efi
+        #[cfg(target_arch = "x86_64")]
+        {
+            let source = Path::new("/").join(BOOTUPD_EFI);
+            let destination = boot_dir.join("x86_64-efi");
+
+            // Проверяем существование исходной директории
+            if !source.exists() {
+                bail!("Source directory {:?} not found", source);
+            }
+
+            // Выполняем копирование
+            copy_dir_all(&source, &destination)?;
+            log::info!("Directory {:?} successfully copied to {:?}", source, destination);
+        }
+
         Ok(())
     }
 
@@ -147,6 +165,33 @@ impl Bios {
         }
         Ok(None)
     }
+}
+
+/// Recursive directory copy function
+fn copy_dir_all(src: &Path, dest: &Path) -> Result<()> {
+    if !src.exists() {
+        bail!("Directory {:?} not found", src);
+    }
+
+    fs::create_dir_all(dest)?;
+
+    for entry_result in fs::read_dir(src)? {
+        let entry = entry_result?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_dir_all(&src_path, &dest_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&src_path, &dest_path)?;
+        } else {
+            // Handle other file types (symlinks, etc.) if necessary
+            log::warn!("Warning: Unsupported file type: {:?}", src_path);
+        }
+    }
+
+    Ok(())
 }
 
 impl Component for Bios {
@@ -239,14 +284,51 @@ impl Component for Bios {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
+    use std::fs::{self, File};
+    use std::io::Write;
 
     #[test]
     fn test_deserialize_lsblk_output() {
         let data = include_str!("../tests/fixtures/example-lsblk-output.json");
-        let devices: Devices = serde_json::from_str(&data).expect("JSON was not well-formatted");
+        let devices: Devices = serde_json::from_str(&data)
+            .expect("JSON was not well-formatted");
         assert_eq!(devices.blockdevices.len(), 7);
         assert_eq!(devices.blockdevices[0].path, "/dev/sr0");
         assert!(devices.blockdevices[0].pttype.is_none());
         assert!(devices.blockdevices[0].parttypename.is_none());
+    }
+
+    #[test]
+    fn test_copy_dir_all() -> Result<()> {
+        let src_dir = tempdir()?;
+        let dest_dir = tempdir()?;
+
+        // Create directory and file structure in src_dir
+        let sub_dir = src_dir.path().join("subdir");
+        fs::create_dir(&sub_dir)?;
+        let file_path = sub_dir.join("testfile.txt");
+        let mut file = File::create(&file_path)?;
+        writeln!(file, "Hello, world!")?;
+
+        // Perform copying
+        copy_dir_all(src_dir.path(), &dest_dir.path().join("copied_subdir"))?;
+
+        // Verify that files are copied
+        let copied_file_path = dest_dir.path().join("copied_subdir").join("subdir").join("testfile.txt");
+        assert!(copied_file_path.exists());
+
+        let content = fs::read_to_string(copied_file_path)?;
+        assert_eq!(content.trim(), "Hello, world!");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_copy_dir_all_nonexistent_src() {
+        let src = Path::new("/nonexistent/source");
+        let dest = Path::new("/nonexistent/dest");
+        let result = copy_dir_all(src, dest);
+        assert!(result.is_err());
     }
 }
