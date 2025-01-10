@@ -11,7 +11,7 @@ use crate::util;
 use serde::{Deserialize, Serialize};
 
 // grub-install file path
-pub(crate) const GRUB_BIN: &str = "/usr/sbin/grub-install";
+pub(crate) const GRUB_BIN: &str = "usr/sbin/grub-install";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct BlockDevice {
@@ -84,7 +84,7 @@ impl Bios {
         if !self.check_grub_modules()? {
             bail!("Failed to find grub modules");
         }
-        let grub_install = Path::new(GRUB_BIN);
+        let grub_install = Path::new("/").join(GRUB_BIN);
         if !grub_install.exists() {
             bail!("Failed to find {:?}", grub_install);
         }
