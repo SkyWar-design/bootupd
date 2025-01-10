@@ -10,9 +10,8 @@ use anyhow::{bail, Result};
 use crate::util;
 use serde::{Deserialize, Serialize};
 
-// grub2-install file path
+// grub-install file path
 pub(crate) const GRUB_BIN: &str = "usr/sbin/grub-install";
-pub(crate) const BOOTUPD_EFI: &str = "usr/lib/bootupd/x86_64-efi";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct BlockDevice {
@@ -30,12 +29,12 @@ struct Devices {
 pub(crate) struct Bios {}
 
 impl Bios {
-    // get target device for running update
+    // Get target device for running update
     fn get_device(&self) -> Result<String> {
         let mut cmd: Command;
         #[cfg(target_arch = "x86_64")]
         {
-            // find /boot partition
+            // Find /boot partition
             cmd = Command::new("findmnt");
             cmd.arg("--noheadings")
                 .arg("--nofsroot")
@@ -44,7 +43,7 @@ impl Bios {
                 .arg("/boot");
             let partition = util::cmd_output(&mut cmd)?;
 
-            // lsblk to find parent device
+            // Use lsblk to find parent device
             cmd = Command::new("lsblk");
             cmd.arg("--paths")
                 .arg("--noheadings")
@@ -55,7 +54,7 @@ impl Bios {
 
         #[cfg(target_arch = "powerpc64")]
         {
-            // get PowerPC-PReP-boot partition
+            // Get PowerPC-PReP-boot partition
             cmd = Command::new("realpath");
             cmd.arg("/dev/disk/by-partlabel/PowerPC-PReP-boot");
         }
@@ -64,9 +63,9 @@ impl Bios {
         Ok(device)
     }
 
-    // Return `true` if grub2-modules installed
+    // Returns `true` if grub modules are installed
     fn check_grub_modules(&self) -> Result<bool> {
-        let usr_path = Path::new("/usr/lib/grub");
+        let usr_path = Path::new("/usr/lib64/grub");
         #[cfg(target_arch = "x86_64")]
         {
             usr_path.join("i386-pc").try_exists().map_err(Into::into)
@@ -80,21 +79,19 @@ impl Bios {
         }
     }
 
-    // Run grub2-install
+    // Run grub-install
     fn run_grub_install(&self, dest_root: &str, device: &str) -> Result<()> {
         if !self.check_grub_modules()? {
-            bail!("Failed to find grub-modules");
+            bail!("Failed to find grub modules");
         }
-        let grub_install = Path::new("/").join(GRUB_BIN);
+        let grub_install = Path::new(GRUB_BIN);
         if !grub_install.exists() {
             bail!("Failed to find {:?}", grub_install);
         }
 
         let mut cmd = Command::new(grub_install);
         let boot_dir = Path::new(dest_root).join("boot");
-        // We forcibly inject mdraid1x because it's needed by CoreOS's default of "install raw disk image"
-        // We also add part_gpt because in some cases probing of the partition map can fail such
-        // as in a container, but we always use GPT.
+        // Forcibly add mdraid1x and part_gpt
         #[cfg(target_arch = "x86_64")]
         cmd.args(["--target", "i386-pc"])
             .args(["--boot-directory", boot_dir.to_str().unwrap()])
@@ -113,18 +110,32 @@ impl Bios {
             bail!("Failed to run {:?}", cmd);
         }
 
-        // Копирование содержимого BOOTUPD_EFI в boot_dir/x86_64-efi
         #[cfg(target_arch = "x86_64")]
         {
-            let source = Path::new("/").join(BOOTUPD_EFI);
+            let source = Path::new("/usr/lib64/grub/x86_64-efi");
             let destination = boot_dir.join("x86_64-efi");
 
-            // Проверяем существование исходной директории
+            // Check if source directory exists
             if !source.exists() {
                 bail!("Source directory {:?} not found", source);
             }
 
-            // Выполняем копирование
+            // Perform copying
+            copy_dir_all(&source, &destination)?;
+            log::info!("Directory {:?} successfully copied to {:?}", source, destination);
+        }
+
+        #[cfg(target_arch = "powerpc64")]
+        {
+            let source = Path::new("/usr/lib64/grub/powerpc-ieee1275");
+            let destination = boot_dir.join("powerpc-ieee1275");
+
+            // Check if source directory exists
+            if !source.exists() {
+                bail!("Source directory {:?} not found", source);
+            }
+
+            // Perform copying
             copy_dir_all(&source, &destination)?;
             log::info!("Directory {:?} successfully copied to {:?}", source, destination);
         }
@@ -132,10 +143,10 @@ impl Bios {
         Ok(())
     }
 
-    // check bios_boot partition on gpt type disk
+    // Check bios_boot partition on gpt type disk
     fn get_bios_boot_partition(&self) -> Result<Option<String>> {
         let target = self.get_device()?;
-        // lsblk to list children with bios_boot
+        // Use lsblk to list children with bios_boot
         let output = Command::new("lsblk")
             .args([
                 "--json",
@@ -150,12 +161,12 @@ impl Bios {
         }
 
         let output = String::from_utf8(output.stdout)?;
-        // Parse the JSON string into the `Devices` struct
+        // Deserialize JSON string into Devices struct
         let Ok(devices) = serde_json::from_str::<Devices>(&output) else {
             bail!("Could not deserialize JSON output from lsblk");
         };
 
-        // Find the device with the parttypename "BIOS boot"
+        // Find device with parttypename "BIOS boot"
         for device in devices.blockdevices {
             if let Some(parttypename) = &device.parttypename {
                 if parttypename == "BIOS boot" && device.pttype.as_deref() == Some("gpt") {
@@ -207,7 +218,7 @@ impl Component for Bios {
         _update_firmware: bool,
     ) -> Result<InstalledContent> {
         let Some(meta) = get_component_update(src_root, self)? else {
-            anyhow::bail!("No update metadata for component {} found", self.name());
+            anyhow::bail!("Update metadata for component {} not found", self.name());
         };
 
         self.run_grub_install(dest_root, device)?;
@@ -224,7 +235,7 @@ impl Component for Bios {
             bail!("Failed to find {:?}", grub_install);
         }
 
-        // Query the rpm database and list the package and build times for /usr/sbin/grub2-install
+        // Query the rpm database and get package and build time information for /usr/sbin/grub-install
         let meta = packagesystem::query_files(sysroot_path, [&grub_install])?;
         write_update_metadata(sysroot_path, self, &meta)?;
         Ok(meta)
@@ -233,7 +244,7 @@ impl Component for Bios {
     fn query_adopt(&self) -> Result<Option<Adoptable>> {
         #[cfg(target_arch = "x86_64")]
         if crate::efi::is_efi_booted()? && self.get_bios_boot_partition()?.is_none() {
-            log::debug!("Skip BIOS adopt");
+            log::debug!("Skipping adopt BIOS");
             return Ok(None);
         }
         crate::component::query_adopt_state()
