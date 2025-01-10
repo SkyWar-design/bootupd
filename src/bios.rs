@@ -113,7 +113,7 @@ impl Bios {
         #[cfg(target_arch = "x86_64")]
         {
             let source = Path::new("/usr/lib64/grub/x86_64-efi");
-            let destination = boot_dir.join("x86_64-efi");
+            let destination = boot_dir.join("grub").join("x86_64-efi");
 
             // Check if source directory exists
             if !source.exists() {
