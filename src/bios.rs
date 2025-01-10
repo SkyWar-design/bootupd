@@ -11,7 +11,7 @@ use crate::util;
 use serde::{Deserialize, Serialize};
 
 // grub-install file path
-pub(crate) const GRUB_BIN: &str = "usr/sbin/grub-install";
+pub(crate) const GRUB_BIN: &str = "/usr/sbin/grub-install";
 
 #[derive(Serialize, Deserialize, Debug)]
 struct BlockDevice {
