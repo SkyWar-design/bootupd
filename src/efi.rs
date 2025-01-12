@@ -3,6 +3,8 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+use std::fs;
+use std::io::prelude::*;
 
 use std::cell::RefCell;
 use std::os::unix::io::AsRawFd;
@@ -317,6 +319,24 @@ impl Component for Efi {
         if !r.success() {
             anyhow::bail!("Failed to copy");
         }
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            let source = Path::new("/usr/lib64/grub/x86_64-efi");
+            let destination = Path::new(dest_root).join("boot/grub/x86_64-efi");
+
+            if !source.exists() {
+                bail!("Source directory {:?} not found", source);
+            }
+
+            copy_dir_all(&source, &destination)?;
+            log::info!(
+                "Directory {:?} successfully copied to {:?}",
+                source,
+                destination
+            );
+        }
+
         if update_firmware {
             if let Some(vendordir) = self.get_efi_vendor(&src_root)? {
                 self.update_firmware(device, destd, &vendordir)?
@@ -443,6 +463,32 @@ impl Component for Efi {
             anyhow::bail!("Failed to find {SHIM} in the image")
         }
     }
+}
+
+fn copy_dir_all(src: &Path, dest: &Path) -> Result<()> {
+    if !src.exists() {
+        bail!("Directory {:?} not found", src);
+    }
+
+    fs::create_dir_all(dest)?;
+
+    for entry_result in fs::read_dir(src)? {
+        let entry = entry_result?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_dir_all(&src_path, &dest_path)?;
+        } else if file_type.is_file() {
+            fs::copy(&src_path, &dest_path)?;
+        } else {
+            // Handle other file types (symlinks, etc.) if necessary
+            log::warn!("Warning: Unsupported file type: {:?}", src_path);
+        }
+    }
+
+    Ok(())
 }
 
 impl Drop for Efi {
